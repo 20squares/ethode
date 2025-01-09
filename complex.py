@@ -48,7 +48,9 @@ class IterationManager:
     def push_unstaking_q(self, v:Vars[T], t:T) -> tuple[T, T]: pass
     def trading_volume_fees(self, v:Vars[T], t:T) -> tuple[T, T]: pass
     def sum_deltas(self) -> Vars[T]: pass
-        
+
+
+
 class ESAItMngr(IterationManager):
     def __init__(self, params: dict[str, Num]):
         self._uq: list[T] = [0]
