@@ -13,14 +13,16 @@ EPB = Units.EPB
 Dless = Units.dimensionless
 Block = Units.Block
 Price = Units.PriceETHUSD
+USD = Units.USD
 
-def ETHx(n:int) -> tuple[ETH,...]:
-    x = (ETH, ) * n
-    return tuple[*x]
+def _tuple_units(t:type, n:int, i:tuple = (), f:tuple = ()) -> tuple[type,...]:
+    return i + (t, ) * n + f
 
-def EPBx(n:int) -> tuple[EPB,...]:
-    x = (EPB, ) * n
-    return tuple[*x]
+def ETHx(n:int, i:tuple = (), f:tuple = ()) -> tuple[ETH,...]:
+    return _tuple_units(ETH, n, i, f)
+
+def EPBx(n:int, i:tuple = (), f:tuple = ()) -> tuple[ETH,...]:
+    return _tuple_units(EPB, n, i, f)
 
 # Simple hard-coded functions
 
@@ -78,7 +80,7 @@ class LinFeeParams(SimpleParams):
         return self.r
 
 # build on top of previous models
-    
+
 @dataclass
 class KineticFeeParams(LinFeeParams):
     k: ETH = 2 ** 10 * ETH
@@ -107,7 +109,7 @@ class ESCB(ODESim):
     def func(v:ETHx(4), t:Block, p:Params) -> ETHx(4):
         # load variables into a dict
         E, S, C, B = v
-        d = {k:v for k,v in zip(('E','S','C','B'), v)}
+        d = {k:x for k,x in zip(('E','S','C','B'), v)}
         d['t'] = t
         # compute functions
         r = p.renvst(**d)
@@ -133,6 +135,8 @@ class ESCBParams(Params):
     def renvst(self, **kwargs) -> float:
         return self.r
     def fees(self, C: ETH, **kwargs) -> tuple[EPB, EPB]:
+        print(self.f)
+        print(C)
         fees = self.f * C
         return fees, self.burned(fees, **kwargs)
     def burned(self, fees: EPB, **kwargs) -> EPB:
@@ -147,12 +151,11 @@ class AndersCurveParams(ESCBParams):
     
 ### Inflation model w/ price
 
-InflData = (Price, ) + ETHx(5)
+InflData = ETHx(5, (Price, ))
 
 @dataclass
 class InflSim(ODESim):
     @staticmethod
-    @Units.wraps(InflData, (InflData, Block, Dless))
     def func(v:InflData, t:Block, p:Params) -> ETHx(4):
         # load variables into a dict
         d = {k:v for k,v in zip(('P','E','S','L','C','B'), v)}
@@ -166,7 +169,7 @@ class InflSim(ODESim):
         # compute derivatives
         dP = (p.dlog_utility(**d) - p.dlog_supply(**d)) * P
         dE = (y := p.yield_curve(**d)) * (S + L)
-        dS = y * S + solo_pfees - (K := p.usd_cost(**d) / P)
+        dS = y * S + solo_pfees - (k := p.val_cost(**d))
         dL = (r := p.lsp_renvst(**d)) * (lsp_rev := y * L + lsp_pfees)
         dC = K + (1 - r) * lsp_rev - tx_fees
         dB = burned_fees
@@ -175,6 +178,7 @@ class InflSim(ODESim):
     
 @dataclass
 class InflParams(Params):
+    def supply(self, **kwargs) -> ETH: pass
     def tot_fees_mev(self, **kwargs) -> EPB: pass
     def burned_fees(self, tot_fees:EPB, **kwargs) -> EPB: pass
     def split_post_burn(self, post_burn_fees: EPB, **kwargs) -> EPBx(2): pass
@@ -188,6 +192,29 @@ class InflParams(Params):
 # Inflation, supply = E
 # uses "on paper inflation" rather than circulating ETH
 
-# Infl supply = C;
-# strict "inflation = expansion of unstaked raw ETH"
+@dataclass
+class EInflParams(InflParams):
+    e: ETH = 1 * ETH
+    fees_per_eth: PB = .1 * PB
+    burn_fraction: float = .01
+    mev_advantage: float = .5
+    anders_constant: ETH = 2**25 * ETH
+    def supply(self, E:ETH, **kwargs) -> ETH:
+        return E
+    def tot_fees_mev(self, **kwargs) -> EPB:
+        return self.fees_per_eth * self.C
+    def burned_fees(self, tot_fees:EPB, **kwargs) -> EPB:
+        return self.burn_fraction * tot_fees
+    def split_post_burn(self, post_burn_fees: EPB, **kwargs) -> EPBx(2):
+        m = self.mev_advantage
+        return tuple(np.r_[m, 1 - m] * post_burn_fees)
+    def yield_curve(self, S:ETH, L:ETH, **kwargs) -> PB:
+        staked = S + L
+        return self.y * np.sqrt(self.e / staked)
+    def val_cost(self, **kwargs) -> USD:
+        return self.fixed_cost
+    def lsp_renvst(self, **kwargs) -> Dless: pass
+    def lsp_pfees(self, **kwargs) -> EPB: pass
+    def dlog_utility(self, **kwargs) -> PB: pass        
+    def dlog_supply(self, **kwargs) -> PB: pass
 
